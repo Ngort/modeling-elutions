@@ -1,0 +1,144 @@
+---
+title: "Modeling Counts"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r libraries echo=FALSE}
+library(tidyverse,warn.conflicts = FALSE)
+library(rstan,warn.conflicts = FALSE)
+library(devtools,warn.conflicts = FALSE)
+library(lazyeval,warn.conflicts = FALSE)
+library(cowplot,warn.conflicts = FALSE)
+library(ggridges)
+library(beepr)
+
+normalit<-function(m){
+    (m - min(m))/(max(m)-min(m))}
+
+```
+
+
+```{r data}
+
+test_data <- read.csv('test_data.csv')[,2:5]
+```
+
+```{r}
+data_O43707 <- filter(test_data,ProteinID=='O43707')
+data_O43707 <- mutate(data_O43707,FractionID=substr(FractionID,7,8) %>% as.numeric)
+#sparkplot_O43707 <- sparkplot(test_data,'Peptide','FractionID','PeptideCount',groupid = 'ProteinID',group_name='O43707')
+wide_O43707 <- spread(data_O43707,key=FractionID,value=PeptideCount)
+#ggdraw(sparkplot_O43707)
+
+```
+
+### Make data amenable for Stan
+```{r}
+fraction <- 1:max(data_O43707$FractionID)
+peptides <- unique(data_O43707$Peptide)
+counts <- wide_O43707[,3:50] %>% as.matrix() %>% apply(1,normalit) %>% t #normalize
+```
+
+
+
+### get argmax_f(count)
+```{r}
+index_max_count <- which(data_O43707$PeptideCount==max(data_O43707$PeptideCount))
+argmax_f <- data_O43707[index_max_count,]$FractionID
+
+```
+x
+
+
+
+### Feed data into Stan 
+```{r}
+stan_data <- list(
+    F = max(data_O43707$FractionID),
+    P = length(unique(data_O43707$Peptide)),
+    counts = counts,
+    peak = argmax_f
+)
+```
+
+
+###Stan hierarchical Model
+```{r pressure, echo=FALSE}
+hmodel = "
+data {
+int F; // number of fractions
+int P; // number of peptides
+int peak; //fraction with a peak
+matrix[P,F] counts;
+}
+
+parameters {
+real<lower=0> mu_p;
+real<lower=0> sd_p;
+real<lower=0> sigma;
+
+vector[P] mu;
+}
+
+
+model {
+
+// prior
+mu_p ~ normal(peak,3);
+sd_p ~ gamma(2,0.5);
+mu ~ normal(mu_p,sd_p);
+sigma ~ gamma(2,0.5);
+
+
+
+// likelihood
+for(p in 1:P){
+    for(f in 1:F){
+        counts[p,f] ~ normal(mu[p],sigma);
+    }
+}
+
+}
+"
+```
+
+###Run Stan Model
+```{r}
+count_fit <- stan(
+    model_code = hmodel,
+    data = stan_data,
+    chains = 4,
+    warmup = 1000,
+    iter = 2000,
+    cores = 4,
+    refresh = 1000
+)
+
+as.data.frame(summary(count_fit)$summary)
+
+beep(8)
+```
+
+```{r}
+as.data.frame(summary(count_fit)$summary)
+
+hm_extract <- extract(count_fit)
+```
+
+```{r}
+posteriors <- data.frame(hm_extract$mu_p,hm_extract$sd_p,hm_extract$sigma,hm_extract$mu) %>% setNames(c('mu_p','sd_p','sigma','mu'))
+ggplot(gather(posteriors,key='parameter'),aes(y=parameter,x=value,fill=parameter,color=parameter)) + geom_density_ridges(scale=10,alpha=0.5) + scale_x_continuous(breaks=round(seq(min(posteriors),max(posteriors),length.out=10),2))
+```
+
+
+
