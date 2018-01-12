@@ -7,11 +7,8 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+### Libraries
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
 ```{r libraries echo=FALSE}
 library(tidyverse,warn.conflicts = FALSE)
@@ -35,9 +32,9 @@ test_data <- read.csv('test_data.csv')[,2:5]
 ```{r}
 data_O43707 <- filter(test_data,ProteinID=='O43707')
 data_O43707 <- mutate(data_O43707,FractionID=substr(FractionID,7,8) %>% as.numeric)
-#sparkplot_O43707 <- sparkplot(test_data,'Peptide','FractionID','PeptideCount',groupid = 'ProteinID',group_name='O43707')
+sparkplot_O43707 <- sparkplot(test_data,'Peptide','FractionID','PeptideCount',groupid = 'ProteinID',group_name='O43707')
 wide_O43707 <- spread(data_O43707,key=FractionID,value=PeptideCount)
-#ggdraw(sparkplot_O43707)
+ggdraw(sparkplot_O43707)
 
 ```
 
@@ -82,9 +79,17 @@ matrix[P,F] counts;
 parameters {
 real<lower=0> mu_p;
 real<lower=0> sd_p;
-real<lower=0> sigma;
+real sigma_in_u;
+real<lower=0> sigma_out;
 
 vector[P] mu;
+}
+
+transformed parameters{
+real<lower=0> sigma_in;
+sigma_in = exp(sigma_in_u);
+
+
 }
 
 
@@ -94,16 +99,29 @@ model {
 mu_p ~ normal(peak,3);
 sd_p ~ gamma(2,0.5);
 mu ~ normal(mu_p,sd_p);
-sigma ~ gamma(2,0.5);
+sigma_in_u ~ normal(0.7,1);
+sigma_out ~ gamma(2,0.5);
 
 
 
 // likelihood
 for(p in 1:P){
     for(f in 1:F){
-        counts[p,f] ~ normal(mu[p],sigma);
+        counts[p,f] ~ normal(pow(f-mu[p],2)/(-2*pow(sigma_in,2)),sigma_out);
     }
 }
+}
+
+generated quantities {
+
+matrix[P,F] counts_hat;
+
+for(p in 1:P){
+    for(f in 1:F){
+        counts_hat[p,f] = normal_rng(pow(f-mu[p],2)/(-2*pow(sigma_in,2)),sigma_out);
+    }
+}
+
 
 }
 "
@@ -132,10 +150,37 @@ as.data.frame(summary(count_fit)$summary)
 hm_extract <- extract(count_fit)
 ```
 
-```{r}
-posteriors <- data.frame(hm_extract$mu_p,hm_extract$sd_p,hm_extract$sigma,hm_extract$mu) %>% setNames(c('mu_p','sd_p','sigma','mu'))
-ggplot(gather(posteriors,key='parameter'),aes(y=parameter,x=value,fill=parameter,color=parameter)) + geom_density_ridges(scale=10,alpha=0.5) + scale_x_continuous(breaks=round(seq(min(posteriors),max(posteriors),length.out=10),2))
+```{r, fig.width=6,fig.height=4}
+posteriors <- data.frame(hm_extract$mu_p,hm_extract$sd_p,hm_extract$sigma_in_u,hm_extract$sigma_in,hm_extract$sigma_out,hm_extract$mu) %>% setNames(c('mu_p','sd_p','sigma_in_u','sigma_in','sigma_out','mu'))
+ggplot(gather(posteriors,key='parameter'),aes(y=parameter,x=value,fill=parameter,color=parameter)) + geom_density_ridges(scale=3,alpha=0.5) + scale_x_continuous(limits=c(min(posteriors),20))
 ```
+
+
+
+
+
+```{r, fig.width=6}
+#as.data.frame(hm_extract$counts_hat[1,1:52,1:48]) %>% View
+
+posterior_means <- rstan::get_posterior_mean(count_fit)
+rownames(posterior_means)
+
+counts_hat <- posterior_means[58:2553,5]
+counts_prediction_means <- matrix(counts_hat,nrow=48,ncol=52) %>% t %>% apply(1,normalit) %>% t
+
+tidy_prediction_means <- as.data.frame(counts_prediction_means) %>% mutate(peptide=1:52) %>% gather(key='fraction',value='count',-peptide,factor_key = TRUE) %>% mutate(fraction=substr(fraction,2,4) %>% as.numeric())
+
+#plot(counts_prediction_means[3,],type='l')
+
+ggplot(data=filter(tidy_prediction_means,peptide==2),aes(x=fraction,y=count)) + geom_line()
+
+ggplot(data=tidy_prediction_means,aes(group=peptide,y=peptide,x=fraction,height=count)) + geom_ridgeline(scale=8,fill='grey',alpha=0.2,color=1)
+
+```
+
+
+
+
 
 
 
