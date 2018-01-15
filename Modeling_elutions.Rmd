@@ -107,7 +107,7 @@ sigma_out ~ gamma(2,0.5);
 // likelihood
 for(p in 1:P){
     for(f in 1:F){
-        counts[p,f] ~ normal(pow(f-mu[p],2)/(-2*pow(sigma_in,2)),sigma_out);
+        counts[p,f] ~ normal(exp(pow(f-mu[p],2)/(-2*pow(sigma_in,2))),sigma_out);
     }
 }
 }
@@ -118,7 +118,7 @@ matrix[P,F] counts_hat;
 
 for(p in 1:P){
     for(f in 1:F){
-        counts_hat[p,f] = normal_rng(pow(f-mu[p],2)/(-2*pow(sigma_in,2)),sigma_out);
+        counts_hat[p,f] = normal_rng(exp(pow(f-mu[p],2)/(-2*pow(sigma_in,2))),sigma_out);
     }
 }
 
@@ -152,7 +152,7 @@ hm_extract <- extract(count_fit)
 
 ```{r, fig.width=6,fig.height=4}
 posteriors <- data.frame(hm_extract$mu_p,hm_extract$sd_p,hm_extract$sigma_in_u,hm_extract$sigma_in,hm_extract$sigma_out,hm_extract$mu) %>% setNames(c('mu_p','sd_p','sigma_in_u','sigma_in','sigma_out','mu'))
-ggplot(gather(posteriors,key='parameter'),aes(y=parameter,x=value,fill=parameter,color=parameter)) + geom_density_ridges(scale=3,alpha=0.5) + scale_x_continuous(limits=c(min(posteriors),20))
+ggplot(gather(posteriors,key='parameter'),aes(y=parameter,x=value,fill=parameter,color=parameter)) + geom_density_ridges(scale=3,alpha=0.5) + scale_x_continuous(limits=c(min(posteriors),max(posteriors)))
 ```
 
 
